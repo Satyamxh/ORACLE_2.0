@@ -1,74 +1,68 @@
-# === Updated run.py with Honesty, Rationality, and Noise ===
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
 from model import OracleModel
-from payoff_mechanisms import (
-    compute_payoff_basic_attack,
-    compute_payoff_redistributive_attack,
-    compute_payoff_symbiotic_attack,
-    compute_payoff_basic_no_attack,
-    compute_payoff_redistributive_no_attack,
-    compute_payoff_symbiotic_no_attack
-)
 
-# Sidebar controls
-st.sidebar.title("Simulation Controls")
-num_jurors = st.sidebar.slider("Number of Jurors", 3, 101, 11, step=2)
-honesty = st.sidebar.slider("Honesty Level (0 = Never vote belief, 1 = Always vote belief)", 0.0, 1.0, 0.8)
-rationality = st.sidebar.slider("Rationality (0 = Random vote, 1 = Maximize payoff)", 0.0, 1.0, 0.7)
-noise_level = st.sidebar.slider("Noise Level (Variance in perceived payoff)", 0.0, 2.0, 0.1)
-p = st.sidebar.slider("Reward (p)", 0.0, 5.0, 1.0)
-d = st.sidebar.slider("Penalty (d)", 0.0, 5.0, 1.0)
-epsilon = st.sidebar.slider("Bribe Bonus (epsilon)", 0.0, 2.0, 0.5)
-bribed_fraction = st.sidebar.slider("Bribed Fraction", 0.0, 1.0, 0.3)
-num_simulations = st.sidebar.slider("Simulations", 50, 5000, 500)
-attack_enabled = st.sidebar.checkbox("Enable Attack (p + epsilon)", value=True)
+st.title("Schelling Oracle Simulation")
 
-payoff_type = st.sidebar.selectbox("Payoff Mechanism", ["Basic", "Redistributive", "Symbiotic"])
+# Sidebar controls for model parameters
+st.sidebar.header("Simulation Parameters")
+num_jurors = st.sidebar.slider("Number of Jurors", min_value=1, max_value=100, value=11, step=1)
+honesty = st.sidebar.slider("Honesty (Probability of sincere vote)", 0.0, 1.0, value=0.8, step=0.05)
+rationality = st.sidebar.slider("Rationality (Probability of choosing best payoff)", 0.0, 1.0, value=0.7, step=0.05)
+noise = st.sidebar.slider("Noise (Std dev of payoff perception)", 0.0, 1.0, value=0.1, step=0.01)
+payoff_mode = st.sidebar.selectbox("Payoff Mechanism", ["Basic", "Redistributive", "Symbiotic"])
+attack_mode = st.sidebar.checkbox("Enable p+ε Attack", value=False)
+bribe_fraction = st.sidebar.slider("Bribed Fraction of Jurors", 0.0, 1.0, value=0.0, step=0.05, disabled=(not attack_mode))
+epsilon_bonus = st.sidebar.slider("Epsilon Bonus (Bribe amount ε)", 0.0, 5.0, value=0.0, step=0.1, disabled=(not attack_mode))
+num_rounds = st.sidebar.number_input("Number of Simulation Rounds", min_value=1, max_value=10000, value=100, step=1)
 
-# Map to correct payoff mechanism based on attack toggle
-payoff_map_attack = {
-    "Basic": compute_payoff_basic_attack,
-    "Redistributive": compute_payoff_redistributive_attack,
-    "Symbiotic": compute_payoff_symbiotic_attack,
-}
+# Fixed deposit and base reward fraction (can be adjusted if needed)
+deposit = 1.0
+base_reward_frac = 1.0
 
-payoff_map_no_attack = {
-    "Basic": compute_payoff_basic_no_attack,
-    "Redistributive": compute_payoff_redistributive_no_attack,
-    "Symbiotic": compute_payoff_symbiotic_no_attack,
-}
+# Initialize the Oracle model with selected parameters
+model = OracleModel(num_jurors=num_jurors,
+                    honesty=honesty,
+                    rationality=rationality,
+                    noise=noise,
+                    p=base_reward_frac,
+                    d=deposit,
+                    epsilon=epsilon_bonus,
+                    bribed_fraction=bribe_fraction,
+                    payoff_type=payoff_mode,
+                    attack=attack_mode)
 
-payoff_function = payoff_map_attack[payoff_type] if attack_enabled else payoff_map_no_attack[payoff_type]
+# Run the simulation for the specified number of rounds
+results = model.run_simulations(int(num_rounds))
 
-# Run simulations
-results = {"X": 0, "Y": 0, "Attack Successes": 0}
-for _ in range(num_simulations):
-    model = OracleModel(
-        num_jurors=num_jurors,
-        honesty=honesty,
-        rationality=rationality,
-        noise=noise_level,
-        p=p,
-        d=d,
-        epsilon=epsilon,
-        bribed_fraction=bribed_fraction,
-        payoff_mechanism=payoff_function
-    )
-    model.step()
-    outcome = "X" if model.votes["X"] >= model.votes["Y"] else "Y"
-    results[outcome] += 1
-    if attack_enabled and outcome == "Y":
-        results["Attack Successes"] += 1
-
-# Display results
-st.title("Schelling Oracle ABM Simulation")
-st.markdown(f"**Total Simulations:** {num_simulations}")
-st.markdown(f"**Attack Success Rate:** {results['Attack Successes'] / num_simulations:.2%}" if attack_enabled else "**Attack Success Rate:** N/A")
-
-fig, ax = plt.subplots()
-ax.bar(["X", "Y"], [results["X"], results["Y"]], color=["blue", "red"])
-ax.set_ylabel("Number of Wins")
-ax.set_title("Outcome Distribution")
-st.pyplot(fig)
+# Display simulation outcomes
+st.subheader("Simulation Results")
+if num_rounds == 1:
+    # Single round: show outcome and votes
+    outcome_counts = results["outcome_counts"]
+    outcome = "A" if outcome_counts["A"] == 1 else "B"
+    votes_for_A = int(results["average_votes_A"])
+    votes_for_B = int(results["average_votes_B"])
+    st.write(f"Outcome of this round: **{outcome}**")
+    st.write(f"Votes — A: {votes_for_A}, B: {votes_for_B}")
+    if attack_mode:
+        if outcome == "B":
+            st.write("Attack Outcome: **Succeeded** (Target outcome B achieved)")
+        else:
+            st.write("Attack Outcome: **Failed** (Target outcome B not achieved)")
+else:
+    # Multiple rounds: show aggregated statistics
+    total_runs = results["total_runs"]
+    outcome_counts = results["outcome_counts"]
+    wins_A = outcome_counts["A"]
+    wins_B = outcome_counts["B"]
+    pct_A = (wins_A / total_runs) * 100
+    pct_B = (wins_B / total_runs) * 100
+    st.write(f"Out of **{total_runs}** simulation rounds:")
+    st.write(f"- Outcome **A** won **{wins_A}** times ({pct_A:.1f}%)")
+    st.write(f"- Outcome **B** won **{wins_B}** times ({pct_B:.1f}%)")
+    if attack_mode:
+        success_rate = results["attack_success_rate"] * 100
+        st.write(f"Attack Success Rate (Outcome B wins): **{success_rate:.1f}%**")
+    avg_A = results["average_votes_A"]
+    avg_B = results["average_votes_B"]
+    st.write(f"Average votes per round — A: **{avg_A:.2f}**, B: **{avg_B:.2f}**")
