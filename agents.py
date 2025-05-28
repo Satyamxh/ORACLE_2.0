@@ -25,10 +25,6 @@ class Juror:
         Accounts for honesty (voting true belief), rationality (voting best perceived payoff), 
         and noise (random payoff misperception).
         """
-        # If juror is bribed (attacker-controlled), always vote "B"
-        if self.bribed:
-            self.vote = "B"
-            return "B"
         # With probability equal to honesty, vote sincerely (according to own belief)
         if random.random() < self.honesty:
             self.vote = self.belief
