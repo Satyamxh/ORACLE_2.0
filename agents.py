@@ -1,11 +1,9 @@
-import math
 import random
-from statistics import mean
-from typing import List, Tuple
+import math
 
 class Juror:
-    """
-    Represents a juror in the Schelling oracle simulation.
+    """Represents a juror in the Schelling oracle simulation.
+    
     Attributes:
         honesty (float): Probability of voting sincerely (according to own belief).
         rationality (float): Likelihood of choosing the payoff-maximizing action.
@@ -17,34 +15,38 @@ class Juror:
         self.honesty = honesty
         self.rationality = rationality
         self.noise = noise
-        self.belief = None  # will be set each round
-        self.bribed = False  # can be set each round
-    
+        self.belief = None    # Will be set each round
+        self.bribed = False   # Will be set each round if this juror is bribed
+        self.vote = None      # The juror's vote in the current round (set in decide_vote)
+
     def decide_vote(self, exp_payoff_A: float, exp_payoff_B: float) -> str:
         """
         Decide the vote ("A" or "B") for this juror given the expected payoffs for voting A vs B.
-        The decision accounts for the juror's honesty, rationality, and noise in payoff perception.
+        Accounts for honesty (voting true belief), rationality (voting best perceived payoff), 
+        and noise (random payoff misperception).
         """
-        # If juror is bribed (attack-controlled), they will vote "B" no matter what.
+        # If juror is bribed (attacker-controlled), always vote "B"
         if self.bribed:
+            self.vote = "B"
             return "B"
-        # With probability equal to honesty, vote according to own belief (sincere vote).
+        # With probability equal to honesty, vote sincerely (according to own belief)
         if random.random() < self.honesty:
-            return self.belief  # vote what they believe is true
-        # Otherwise, the juror is considering payoffs:
-        # Add some noise to the expected payoffs to simulate misperception.
+            self.vote = self.belief
+            return self.belief
+        # Otherwise, consider payoff-maximizing vote with noise in perception
         perceived_A = exp_payoff_A + random.gauss(0, self.noise)
         perceived_B = exp_payoff_B + random.gauss(0, self.noise)
-        # Determine which vote seems better financially.
-        best_vote = "A" if perceived_A > perceived_B else "B"
-        # If perceived payoffs are exactly equal (which is rare), we can break tie by favoring their belief or random.
+        # Determine which vote has higher perceived payoff
         if math.isclose(perceived_A, perceived_B, rel_tol=1e-9):
-            best_vote = self.belief  # default to their belief in a tie scenario
-        # Decide whether to follow the calculated best vote or deviate, based on rationality.
+            # If payoffs are essentially equal, default to voting own belief
+            best_vote = self.belief
+        else:
+            best_vote = "A" if perceived_A > perceived_B else "B"
+        # Follow the best perceived option with probability = rationality, otherwise deviate
         if random.random() < self.rationality:
-            # Follow the best perceived payoff option.
+            self.vote = best_vote
             return best_vote
         else:
-            # With (1 - rationality) chance, the juror deviates (could vote the opposite or randomly).
-            # We'll choose the opposite of best_vote as an "error" decision.
-            return "A" if best_vote == "B" else "B"
+            # With (1 - rationality) chance, vote the opposite of the perceived best (irrational choice)
+            self.vote = "A" if best_vote == "B" else "B"
+            return self.vote
