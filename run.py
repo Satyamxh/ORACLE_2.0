@@ -7,6 +7,45 @@ streamlit run "run.py"
 import streamlit as st
 from model import OracleModel
 import pandas as pd
+import altair as alt
+
+# to add paragraph in help (formatting) - streamlit does not allow markdown and this is a way to bypass that restriction
+
+help_attack = """
+Tick if you want to enable a $p+\\varepsilon$ attack. 
+
+$p+\\varepsilon$ attacks are done via smart contracts, they are publicly visible and target all jurors.
+
+This simply means the juror's payoff matrix adapts to fit the attack.
+"""
+
+help_payoff_mech = """
+Choose how jurors are rewarded depending on how their vote aligns with the outcome.
+
+**Basic**: Jurors who vote with the majority get a fixed reward; others lose their deposit.
+
+**Redistributive**: Losers' deposits are redistributed among winners. Payoff depends on how many others voted the same way.
+
+**Symbiotic**: Rewards increase with coordination. The more jurors vote the same way, the greater the reward — fostering consensus.
+"""
+
+help_noise = """
+This models uncertainty in the juror's perception of expected payoffs for each option.
+
+A higher value increases the likelihood that jurors misjudge which option maximises their payoff.
+
+This helps to simulate cognitive bias or limited understanding. This affects strategic (rational) voting behaviour.
+"""
+
+help_x_guess = """
+This models uncertainty in the juror's belief about how many other jurors will vote for X.
+
+A conservative estimate of 50$\%$ of the total number of jurors is selected for $x$.
+
+This parameter sets the level of variation. A higher value means more variation in the juror's internal estimate of $x$.
+
+This helps to human decision-making.
+"""
 
 st.title("Schelling Oracle Simulation")
 
@@ -19,24 +58,17 @@ honesty = st.sidebar.slider("Honesty", 0.0, 1.0, value=0.35, step=0.05,
 rationality = st.sidebar.slider("Rationality", 0.0, 1.0, value=0.7, step=0.05,
                                 help="Specifies the probability of the juror attempting to maximise their payoff.")
 noise = st.sidebar.slider("Perception Noise (Payoff Uncertainty)", 0.0, 1.0, value=0.1, step=0.01,
-                          help="This models uncertainty in the juror's perception of expected payoffs for each option. "
-                               "A higher value increases the likelihood that jurors misjudge which option maximises their payoff. "
-                               "This helps to simulate cognitive bias or limited understanding. This affects strategic (rational) voting behaviour.")
+                          help=help_noise)
 deposit = st.sidebar.slider("Deposit ($d$)", 0.0, 5.0, value=0.0, step=0.1,
                             help="Specifies the initial deposit paid by the juror ($d$ in payoff matrix).")
 base_reward_frac = st.sidebar.slider("Base Reward ($p$)", 0.0, 5.0, value=1.0, step=0.1,
                                      help="Specifies the reward for voting with the majority ($p$ in payoff matrix).")
 payoff_mode = st.sidebar.selectbox("Payoff Mechanism", ["Basic", "Redistributive", "Symbiotic"],
-                                   help="Used to choose which payoff mechanism to use for simulation.")
+                                   help=help_payoff_mech)
 x_guess_noise = st.sidebar.slider("Belief Noise in Peer Votes ($x$)", 0.0, 1.0, value=0.0, step=0.01, disabled=(payoff_mode == "Basic"),
-                                  help="This models uncertainty in the juror's belief about how many other jurors will vote the same way. "
-                                       r"A conservative estimate of 50$\%$ is chosen and you can set the level of variation. "
-                                       "A higher value means more variation in their internal estimate of $x$. "
-                                       "This is to help simulate human decision-making.")
+                                  help=help_x_guess)
 attack_mode = st.sidebar.checkbox(r"Enable p+$\varepsilon$ Attack", value=False,
-                                  help=r"Tick if you want to enable a $p+\varepsilon$ attack.")
-bribe_fraction = st.sidebar.slider("Bribed Fraction of Jurors", 0.0, 1.0, value=0.0, step=0.05, disabled=(not attack_mode),
-                                   help="Specifies the percentage of jurors upon which a bribe is sent.")
+                                  help=help_attack)
 epsilon_bonus = st.sidebar.slider(r"Epsilon (Bribe amount $\varepsilon$)", 0.0, 5.0, value=0.0, step=0.1, disabled=(not attack_mode),
                                   help=r"Specifies Bribe amount ($\varepsilon$ in payoff matrix).")
 num_rounds = st.sidebar.number_input("Number of Simulation Rounds", min_value=1, max_value=10000, value=100, step=1,
@@ -50,13 +82,18 @@ model = OracleModel(num_jurors=num_jurors,
                     p=base_reward_frac,
                     d=deposit,
                     epsilon=epsilon_bonus,
-                    bribed_fraction=bribe_fraction,
                     payoff_type=payoff_mode,
                     attack=attack_mode,
                     x_guess_noise=x_guess_noise)
 
+progress_bar = st.progress(0)
+status_text = st.empty()
+
 # Run the simulation for the specified number of rounds
-results = model.run_simulations(int(num_rounds))
+results = model.run_simulations(int(num_rounds), progress_bar=progress_bar, status_text=status_text)
+
+progress_bar.empty()
+status_text.empty()
 
 # Payoff matrix visualisation
 st.subheader("Payoff Mechanism Matrix")
@@ -74,7 +111,7 @@ if payoff_mode == "Basic":
         ]
     }
     variables = [
-        "- **$p$**: Base reward multiplier",
+        "- **$p$**: Base reward",
         "- **$d$**: Deposit amount",
     ]
     if attack_mode:
@@ -134,33 +171,33 @@ st.subheader("Simulation Results")
 if num_rounds == 1:
     # Single round: show outcome and votes
     outcome_counts = results["outcome_counts"]
-    outcome = "A" if outcome_counts["A"] == 1 else "B"
-    votes_for_A = int(results["average_votes_A"])
-    votes_for_B = int(results["average_votes_B"])
+    outcome = "X" if outcome_counts["X"] == 1 else "Y"
+    votes_for_X = int(results["average_votes_X"])
+    votes_for_Y = int(results["average_votes_Y"])
     st.write(f"Outcome of this round: **{outcome}**")
-    st.write(f"Votes — A: {votes_for_A}, B: {votes_for_B}")
+    st.write(f"Votes — X: {votes_for_X}, Y: {votes_for_Y}")
     if attack_mode:
-        if outcome == "B":
-            st.write("Attack Outcome: **Succeeded** (Target outcome B achieved)")
+        if outcome == "Y":
+            st.write("Attack Outcome: **Succeeded** (Target outcome Y achieved)")
         else:
-            st.write("Attack Outcome: **Failed** (Target outcome B not achieved)")
+            st.write("Attack Outcome: **Failed** (Target outcome Y not achieved)")
 else:
     # Multiple rounds: show aggregated statistics
     total_runs = results["total_runs"]
     outcome_counts = results["outcome_counts"]
-    wins_A = outcome_counts["A"]
-    wins_B = outcome_counts["B"]
-    pct_A = (wins_A / total_runs) * 100
-    pct_B = (wins_B / total_runs) * 100
+    wins_X = outcome_counts["X"]
+    wins_Y = outcome_counts["Y"]
+    pct_X = (wins_X / total_runs) * 100
+    pct_Y = (wins_Y / total_runs) * 100
     st.write(f"Out of **{total_runs}** simulation rounds:")
-    st.write(f"- Outcome **A** won **{wins_A}** times ({pct_A:.1f}%)")
-    st.write(f"- Outcome **B** won **{wins_B}** times ({pct_B:.1f}%)")
+    st.write(f"- Outcome **X** won **{wins_X}** times ({pct_X:.1f}%)")
+    st.write(f"- Outcome **Y** won **{wins_Y}** times ({pct_Y:.1f}%)")
     if attack_mode:
         success_rate = results["attack_success_rate"] * 100
-        st.write(f"Attack Success Rate (Outcome B wins): **{success_rate:.1f}%**")
-    avg_A = results["average_votes_A"]
-    avg_B = results["average_votes_B"]
-    st.write(f"Average votes per round — A: **{avg_A:.2f}**, B: **{avg_B:.2f}**")
+        st.write(f"Attack Success Rate (Outcome Y wins): **{success_rate:.1f}%**")
+    avg_X = results["average_votes_X"]
+    avg_Y = results["average_votes_Y"]
+    st.write(f"Average votes per round — X: **{avg_X:.2f}**, Y: **{avg_Y:.2f}**")
 
 # download results data into a CVS file
 
@@ -173,8 +210,11 @@ rounds_index = list(range(1, len(history_X) + 1))
 df = pd.DataFrame({
     "Round": rounds_index,
     "X_votes": history_X,
-    "Y_votes": history_Y
+    "Y_votes": history_Y,
 })
+
+df["avg_payoff_X"] = model.avg_payoff_X
+df["avg_payoff_Y"] = model.avg_payoff_Y
 
 # Determine majority and whether attack succeeded
 df["Majority"] = df.apply(lambda row: "Y" if row["Y_votes"] > row["X_votes"] else "X", axis=1)
@@ -183,17 +223,53 @@ if attack_mode:
 else:
     df["AttackSucceeded"] = 0
 
-# Line chart of vote counts over time (only shown if multiple rounds)
+# Line chart of vote counts across rounds (only shown if multiple rounds)
 if len(df) > 1:
-    st.subheader("Votes Over Time")
-    chart_data = df.set_index("Round")[["X_votes", "Y_votes"]]
-    st.line_chart(chart_data)
+    st.subheader("Voting Dynamics Across Rounds")
 
-# CSV download
+    chart = alt.Chart(df).transform_fold(
+        ["X_votes", "Y_votes"],
+        as_=["Vote Type", "Count"]
+    ).mark_line().encode(
+        x=alt.X("Round:Q", title="Simulation Round"),
+        y=alt.Y("Count:Q", title="Number of Votes"),
+        color=alt.Color("Vote Type:N", title="Vote Option",
+            scale=alt.Scale(domain=["X_votes", "Y_votes"], range=["steelblue", "red"]))
+    ).properties(
+        width=800,  # Change this to your desired width
+        height=400,  # Change this to your desired height
+    )
+
+    st.altair_chart(chart, use_container_width=False)
+
+# Average payoff
+
+if len(df) == 1:
+    st.subheader("Payoff per Vote Type of This Round")
+    st.write(f"Average payoff — X: **{model.avg_payoff_X[0]:.2f}**, Y: **{model.avg_payoff_Y[0]:.2f}**")
+elif len(df) > 1 and "avg_payoff_X" in df.columns and "avg_payoff_Y" in df.columns: # Line chart of Average payoffs across rounds (only shown if multiple rounds)
+    st.subheader("Average Payoff per Vote Type Across Rounds")
+
+    payoff_chart = alt.Chart(df).transform_fold(
+        ["avg_payoff_X", "avg_payoff_Y"],
+        as_=["Vote Type", "Average Payoff"]
+    ).mark_line().encode(
+        x=alt.X("Round:Q", title="Simulation Round"),
+        y=alt.Y("Average Payoff:Q", title="Payoff"),
+        color=alt.Color("Vote Type:N", title="Vote Option",
+            scale=alt.Scale(domain=["avg_payoff_X", "avg_payoff_Y"], range=["steelblue", "red"]))
+    ).properties(
+        width=800,
+        height=400,
+    )
+
+    st.altair_chart(payoff_chart, use_container_width=False)
+
+# CSV download for all results (voting dynamics and average payoff)
 csv_data = df.to_csv(index=False).encode("utf-8")
 st.download_button(
-    label="Download Results as CSV",
+    label="Download Simulation Results as a CSV file",
     data=csv_data,
-    file_name="Oracle_Simulation_Results.csv",
+    file_name="Voting_Dynamics_Results.csv",
     mime="text/csv"
 )
