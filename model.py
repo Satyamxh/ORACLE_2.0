@@ -6,85 +6,81 @@ from agents import Juror
 
 class OracleModel:
     """
-    Simulates the Schelling oracle (single-round) with a panel of jurors.
+    Agent-based model of the Schelling point oracle. Simulates a single dispute resolution round 
+    with a panel of jurors voting on outcome "A" vs "B", including payoff mechanism and optional attack.
     """
     def __init__(self, num_jurors: int, honesty: float, rationality: float, noise: float,
-                 p: float, d: float, epsilon: float,
-                 bribed_fraction: float, payoff_type: str, attack: bool):
-        self.N = num_jurors
-        self.honesty = honesty
-        self.rationality = rationality
-        self.noise = noise
-        self.p = p               # Could be used as reward factor or belief fraction depending on context
-        self.d = d               # deposit each juror stakes
-        self.epsilon = epsilon   # attack bribe bonus
-        self.bribed_fraction = bribed_fraction
-        self.payoff_type = payoff_type  # "Basic", "Redistributive", or "Symbiotic"
-        self.attack = attack
-        # Initialize jurors list
+                 p: float, d: float, epsilon: float, bribed_fraction: float,
+                 payoff_type: str, attack: bool):
+        # Store model parameters
+        self.num_jurors = num_jurors              # Number of jurors in the panel
+        self.honesty = honesty                    # Honesty probability for all jurors (stick to their belief)
+        self.rationality = rationality            # Rationality probability for all jurors (maximise their payoff)
+        self.noise = noise                        # Noise standard deviation for payoff estimation (juror's imperfect perception of the payoff by adding a noise - simulate human decision - making)
+        self.p = p                                # Base reward (p)
+        self.d = d                                # Deposit (stake)
+        self.epsilon = epsilon                    # Bonus payoff (epsilon) given by attacker for bribery
+        self.bribed_fraction = bribed_fraction    # Fraction of jurors that can be bribed by attacker
+        self.payoff_type = payoff_type            # Payoff mechanism: "Basic", "Redistributive", or "Symbiotic"
+        self.attack = attack                      # Whether an attack (p+epsilon attack) is enabled
+        # Initialise the jurors
         self.jurors: List[Juror] = [Juror(honesty, rationality, noise) for _ in range(num_jurors)]
-        # Determine symbiotic parameters if needed
+        # Treat all jurors as the selected panel for voting
+        self.selected_jurors: List[Juror] = self.jurors
+        # For symbiotic payoff, define parameters beta and external_reward
         if payoff_type.lower() == "symbiotic":
-            # define fraction of deposit to redistribute (beta) and external reward factor
-            self.beta = 0.5    # e.g., 50% of losers' stake is redistributed
-            self.external_reward = p * d  # reward given to each winner (p fraction of deposit)
+            self.beta = 0.5                   # Fraction of losers' deposit redistributed to winners
+            self.external_reward = p * d      # External reward to each winner (e.g., fraction of deposit)
         else:
-            self.beta = 1.0    # not used in non-symbiotic modes
-            self.external_reward = 0.0  # not used in basic/redistributive (could be interpreted differently for Basic)
-    
+            self.beta = 1.0                   # Not used in Basic/Redistributive
+            self.external_reward = 0.0        # Not used in Basic/Redistributive
+        # Alias for attack bribe amount (used in payoff mechanism calculations if needed)
+        self.bribe_amount = epsilon
+
     def _expected_payoffs(self, juror_index: int) -> Tuple[float, float]:
         """
-        Compute the expected payoff for a specific juror voting A vs voting B.
-        This accounts for the current model parameters, including the attack scenario.
+        Compute the expected payoff for a given juror if they vote "A" vs if they vote "B".
+        This uses the current model parameters (payoff mechanism, attack settings) and 
+        assumes other jurors' votes are uncertain (modeled via probability q for another juror voting "A").
         """
-        # Get effective probability q that any other given juror votes A.
-        # We exclude the current juror from this calculation (focus on others).
-        if self.attack:
-            # Under attack: assume bribed_fraction * (N-1) of others definitely vote B.
-            # So they have 0 chance to vote A. The remaining (1 - bribed_fraction) can vote A with probability p.
-            q = (1 - self.bribed_fraction) * self.p
+        other_count = self.num_jurors - 1  # Number of other jurors aside from this one
+        # Determine probability q that any given other juror votes "A"
+        if other_count > 0:
+            if self.attack:
+                # Under attack: assume bribed_fraction of others will vote "B" (with 0% chance for "A"),
+                # and the remaining (1 - bribed_fraction) vote "A" with probability p.
+                q = (1 - self.bribed_fraction) * self.p
+            else:
+                # No attack: each other juror votes "A" with probability p (i.e., fraction of jurors with belief "A").
+                q = self.p
         else:
-            # No attack: each other juror votes A with probability p (basically fraction with belief A).
-            q = self.p
-        other_count = self.N - 1  # number of other jurors
-        # We will compute expected payoff by summing over possible k (others voting A).
-        # Use binomial probabilities for k.
-        # To avoid computing large combinations repeatedly, we can calculate probabilities iteratively or use math.comb.
-        # For clarity and given moderate N, we'll just compute directly.
+            # If there are no other jurors, this juror's vote solely decides outcome (handle trivially).
+            q = 0.0
+        # Compute expected payoffs for voting "A" and voting "B" by summing over all possible numbers of others voting "A"
         exp_payoff_A = 0.0
         exp_payoff_B = 0.0
-        # Determine threshold for A winning. For simplicity, let's define majority threshold.
-        majority_needed = self.N // 2 + 1  # smallest number of votes to have >50% (works for N odd; if N even, this treats >50%)
-        # Precompute binomial probability distribution for k = 0,...,other_count
-        # We'll use a simple approach to compute P(X=k) for X ~ Binomial(other_count, q)
-        # (In practice, could use math.comb and q^k etc., but careful with large N and floating precision.)
-        # For clarity, we'll iteratively build probabilities using the relationship: P(k) = P(k-1) * (remaining terms).
-        probabilities = [0.0] * (other_count + 1)
+        majority_needed = self.num_jurors // 2 + 1  # Votes needed for a majority (>50%). If tie, "A" wins by rule.
+        # Calculate binomial probabilities for k = 0...other_count (where k is number of other jurors voting "A")
+        probabilities = []
         for k in range(other_count + 1):
-            # Compute binomial probability P(X=k)
-            # We can compute manually: C(n, k) * q^k * (1-q)^(n-k)
-            # For stability, use math.comb for combination.
-            prob = math.comb(other_count, k) * (q ** k) * ((1 - q) ** (other_count - k))
-            probabilities[k] = prob
-        # Now sum over all k cases:
+            # Binomial probability P(k out of other_count vote A) = C(other_count,k) * q^k * (1-q)^(other_count-k)
+            prob_k = math.comb(other_count, k) * (q ** k) * ((1 - q) ** (other_count - k))
+            probabilities.append(prob_k)
+        # Iterate over all possible k values to accumulate expected payoff
         for k in range(other_count + 1):
             prob_k = probabilities[k]
-            # Determine outcome if current juror votes A:
-            # Current juror votes A, so total A votes = k (others voting A) + 1 (this juror).
-            votes_A_ifA = k + 1
-            votes_B_ifA = other_count - k  # since out of others, k voted A, rest voted B
-            # Outcome if juror votes A:
-            if votes_A_ifA >= majority_needed:  # A wins
-                # If attack on and outcome is A wins, attacker pays those who voted B (not this juror, since juror voted A, so irrelevant for this juror's payoff).
-                # Juror is on winning side.
+            # Scenario: this juror votes "A"
+            votes_A_ifA = k + 1   # k others vote A, plus this juror's A vote
+            votes_B_ifA = other_count - k
+            if votes_A_ifA >= majority_needed:
+                # Outcome: "A" wins if this juror votes A
                 if self.payoff_type.lower() == "basic":
-                    # deposit back + p fraction reward
-                    payoff_A = self.d + (self.p * self.d)
+                    # Winner gets back deposit + p*d reward
+                    payoff_A = self.d + self.p * self.d
                 elif self.payoff_type.lower() == "redistributive":
-                    # winners share losers' deposits equally
+                    # Winners share losers' deposits equally
                     winners = votes_A_ifA
                     losers = votes_B_ifA
-                    # If losers = 0 (everyone voted A), each gets just their deposit (no extra, since no losers to take from).
                     if losers == 0 or winners == 0:
                         payoff_A = self.d
                     else:
@@ -92,31 +88,31 @@ class OracleModel:
                 elif self.payoff_type.lower() == "symbiotic":
                     winners = votes_A_ifA
                     losers = votes_B_ifA
-                    # If unanimous (losers=0), everyone gets deposit + external reward (no redistribution needed).
                     if losers == 0:
                         payoff_A = self.d + self.external_reward
                     else:
-                        # Losers lose beta*d each. Total redistributed = losers * beta*d.
+                        # Losers lose beta*d each; redistribute that plus external reward to winners
                         payoff_A = self.d + (losers * self.beta * self.d) / winners + self.external_reward
-                # (If needed, ensure payoff_A is at least d in cases where losers=0 etc., but above covers it.)
-            else:  # B wins, juror voted A and is in minority
+                else:
+                    payoff_A = self.d  # default fallback (should not happen if payoff_type is valid)
+            else:
+                # Outcome: "B" wins and this juror voted A (losing side)
                 if self.payoff_type.lower() == "basic":
                     payoff_A = 0.0  # lost deposit
                 elif self.payoff_type.lower() == "redistributive":
                     payoff_A = 0.0  # lost deposit
                 elif self.payoff_type.lower() == "symbiotic":
-                    # Loser keeps (1-beta)*d perhaps.
-                    payoff_A = (1 - self.beta) * self.d
-                # If attack is on and B wins, the juror voted A so they get no bribe (attacker doesn't pay those who voted A).
-                # payoff_A as above already reflects losing scenario.
-            # Determine outcome if current juror votes B:
-            # Total A votes = k (since juror votes B), total B votes = (other_count - k) + 1.
-            votes_A_ifB = k
+                    payoff_A = (1 - self.beta) * self.d  # keeps portion of deposit (the rest lost)
+                else:
+                    payoff_A = 0.0
+                # If attack is on and B wins, attacker does NOT compensate jurors who voted A (no additional payoff)
+            # Scenario: this juror votes "B"
+            votes_A_ifB = k        # k others vote A, plus this juror votes B
             votes_B_ifB = other_count - k + 1
-            if votes_B_ifB >= majority_needed:  # B wins
-                # Juror voted B and is on winning side.
+            if votes_B_ifB >= majority_needed:
+                # Outcome: "B" wins if this juror votes B
                 if self.payoff_type.lower() == "basic":
-                    payoff_B = self.d + (self.p * self.d)
+                    payoff_B = self.d + self.p * self.d
                 elif self.payoff_type.lower() == "redistributive":
                     winners = votes_B_ifB
                     losers = votes_A_ifB
@@ -131,81 +127,94 @@ class OracleModel:
                         payoff_B = self.d + self.external_reward
                     else:
                         payoff_B = self.d + (losers * self.beta * self.d) / winners + self.external_reward
-                # Attacker doesn't pay if B wins (no failed attack).
-            else:  # A wins, juror voted B and is minority
+                else:
+                    payoff_B = self.d
+                # If attack is on and B wins, the attack succeeds (no special compensation needed for B voters)
+            else:
+                # Outcome: "A" wins and this juror voted B (losing side)
                 if self.payoff_type.lower() == "basic":
-                    payoff_B = 0.0  # normally they'd lose deposit
+                    payoff_B = 0.0
                 elif self.payoff_type.lower() == "redistributive":
-                    payoff_B = 0.0  # they'd lose deposit
+                    payoff_B = 0.0
                 elif self.payoff_type.lower() == "symbiotic":
-                    payoff_B = (1 - self.beta) * self.d  # they'd lose part of deposit
-                # But if attack is on and B loses, attacker pays deposit + epsilon to those who voted B.
+                    payoff_B = (1 - self.beta) * self.d
+                else:
+                    payoff_B = 0.0
+                # If attack is on and B loses, attacker compensates B voters with their deposit + epsilon bonus
                 if self.attack:
-                    payoff_B = self.d + self.epsilon  # compensate their loss and add bonus
-            # Accumulate expectation
+                    payoff_B = self.d + self.epsilon
+            # Add weighted payoff for this scenario (k others vote A) to expectations
             exp_payoff_A += prob_k * payoff_A
             exp_payoff_B += prob_k * payoff_B
         return exp_payoff_A, exp_payoff_B
 
     def simulate_once(self) -> Tuple[str, int, int]:
         """
-        Simulate a single round. Assign beliefs, mark bribed jurors, collect votes, and determine the outcome.
+        Run a single simulation round: assign juror beliefs, apply bribery if attack is enabled, 
+        collect votes from all jurors, and determine the outcome.
+        
         Returns:
-            outcome (str): Winning outcome ("A" or "B").
-            votes_for_A (int)
-            votes_for_B (int)
+            outcome (str): "A" or "B" (winning outcome of this round)
+            votes_for_A (int): Number of jurors who voted "A"
+            votes_for_B (int): Number of jurors who voted "B"
         """
-        # 1. Assign beliefs to each juror (based on probability p for believing A).
+        # 1. Assign random beliefs to jurors ("A" belief with probability p, else "B")
         for juror in self.jurors:
-            juror.bribed = False  # reset bribed status each round
+            juror.bribed = False  # reset bribery status each round
             juror.belief = "A" if random.random() < self.p else "B"
-        # 2. Mark a fraction of jurors as bribed (if attack on).
+        # 2. Mark a fraction of jurors as bribed (if attack is enabled)
         if self.attack and self.bribed_fraction > 0:
-            num_bribed = round(self.bribed_fraction * self.N)
-            # Randomly choose that many jurors to be bribed
-            bribed_indices = random.sample(range(self.N), min(num_bribed, self.N))
+            num_to_bribe = round(self.bribed_fraction * self.num_jurors)
+            # Randomly select jurors to bribe
+            bribed_indices = random.sample(range(self.num_jurors), min(num_to_bribe, self.num_jurors))
             for idx in bribed_indices:
                 self.jurors[idx].bribed = True
-        # 3. Each juror decides their vote.
+        # 3. Each juror makes a voting decision
         votes = []
         for i, juror in enumerate(self.jurors):
-            # If juror is bribed, they'll vote B without needing payoff calc (our Juror.decide_vote handles it too).
-            # Otherwise, compute expected payoffs for voting A vs B for this juror.
-            expA, expB = self._expected_payoffs(i)
-            vote = juror.decide_vote(expA, expB)
+            expA, expB = self._expected_payoffs(i)       # compute expected payoff of voting A vs B
+            vote = juror.decide_vote(expA, expB)         # juror decides vote based on expectations
             votes.append(vote)
-        # 4. Count votes for A and B.
+        # 4. Count votes
         votes_for_A = votes.count("A")
         votes_for_B = votes.count("B")
-        # 5. Determine outcome.
-        outcome = "A" if votes_for_A >= votes_for_B else "B"  # if tie, A wins by this rule; adjust if needed.
+        # 5. Determine winning outcome (tie-break goes to "A")
+        outcome = "A" if votes_for_A >= votes_for_B else "B"
+        # Store votes in a dictionary for potential payoff analysis (using "X"/"Y" to correspond to "A"/"B")
+        self.votes = {"X": votes_for_A, "Y": votes_for_B}
         return outcome, votes_for_A, votes_for_B
 
     def run_simulations(self, num_simulations: int) -> dict:
         """
-        Run multiple simulation rounds and compute aggregate statistics.
-        Returns a dictionary with results summary.
+        Run the simulation for a given number of rounds and aggregate the results.
+        
+        Returns:
+            results (dict) with keys:
+              - "total_runs": number of rounds simulated
+              - "outcome_counts": {'A': count_A_wins, 'B': count_B_wins}
+              - "attack_success_rate": fraction of rounds outcome was "B" (None if attack is False)
+              - "average_votes_A": average number of "A" votes per round
+              - "average_votes_B": average number of "B" votes per round
         """
         outcomes = {"A": 0, "B": 0}
-        votes_A_list = []
-        votes_B_list = []
+        total_votes_A = []
+        total_votes_B = []
         for _ in range(num_simulations):
             outcome, votes_A, votes_B = self.simulate_once()
             outcomes[outcome] += 1
-            votes_A_list.append(votes_A)
-            votes_B_list.append(votes_B)
-        # Compute attack success rate if applicable
+            total_votes_A.append(votes_A)
+            total_votes_B.append(votes_B)
+        # Calculate attack success rate if applicable
         attack_success_rate = None
         if self.attack:
-            # Attack succeeds when outcome is B (the attacker’s desired outcome)
             attack_success_rate = outcomes["B"] / num_simulations
-        # Average votes for A and B
-        avg_votes_for_A = mean(votes_A_list)
-        avg_votes_for_B = mean(votes_B_list)
+        # Calculate average votes for each option
+        avg_votes_A = mean(total_votes_A) if total_votes_A else 0.0
+        avg_votes_B = mean(total_votes_B) if total_votes_B else 0.0
         return {
             "total_runs": num_simulations,
             "outcome_counts": outcomes,
             "attack_success_rate": attack_success_rate,
-            "average_votes_A": avg_votes_for_A,
-            "average_votes_B": avg_votes_for_B
+            "average_votes_A": avg_votes_A,
+            "average_votes_B": avg_votes_B
         }
