@@ -233,5 +233,9 @@ class OracleModel:
             "outcome_counts": outcomes,
             "attack_success_rate": attack_success_rate,
             "average_votes_X": avg_votes_X,
-            "average_votes_Y": avg_votes_Y
+            "average_votes_Y": avg_votes_Y,
+            "history_X": self.history_X,
+            "history_Y": self.history_Y,
+            "avg_payoff_X": self.avg_payoff_X,
+            "avg_payoff_Y": self.avg_payoff_Y
         }
