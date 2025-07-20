@@ -236,8 +236,8 @@ else:
     st.write(f"- Outcome **X** won **{wins_X}** times ({pct_X:.1f}%)")
     st.write(f"- Outcome **Y** won **{wins_Y}** times ({pct_Y:.1f}%)")
     if attack_mode:
-        success_rate = results.get("attack_success_rate", wins_Y / total_runs) * 100
-        st.write(f"Attack Success Rate (Outcome Y wins): **{success_rate:.1f}%**")
+        success_rate = results.get("attack_success_rate", 0)
+        st.write(f"Attack Success Rate (Rate of Y wins as compared to no attack): **{success_rate:.1f}%**")
     avg_X = results.get("average_votes_X", None)
     avg_Y = results.get("average_votes_Y", None)
     
@@ -266,6 +266,7 @@ if appeal_mode and "appeals_df" in results:
 
     df_overlay_plot = pd.DataFrame({
         "Round": rounds_index,
+        "Number of Jurors": [num_jurors] * len(history_X),
         "X_votes": history_X,
         "Y_votes": history_Y,
         "avg_payoff_X": avg_payoff_X,
@@ -290,15 +291,31 @@ else: # if no appeal mode is selected do regular
     df_overlay = None
     # fall back to regular history
     rounds_index = list(range(1, len(history_X) + 1))
-    df = pd.DataFrame({
+    
+    data_dict = {
         "Round": rounds_index,
+        "Number of Jurors": [num_jurors] * len(history_X),
+        "honesty": [results["honesty"]] * len(history_X),
+        "rationality": [results["rationality"]] * len(history_X),
+        "base reward (p)": [results["p"]] * len(history_X),
+        "deposit (d)": [results["d"]] * len(history_X),
+        "noise": [results["noise"]] * len(history_X),
+        "x_guess_noise": [results["x_guess_noise"]] * len(history_X) if "x_guess_noise" in results else [0.0] * len(history_X),
+        "payoff_type": [results["payoff_type"]] * len(history_X),
         "X_votes": history_X,
         "Y_votes": history_Y,
         "avg_payoff_X": avg_payoff_X,
         "avg_payoff_Y": avg_payoff_Y,
-    })
+    }
 
-# Determine majority and whether attack succeeded
+    # add no-attack vote columns if attack mode
+    if attack_mode and "history_X_no_attack" in results:
+        data_dict["X_votes_no_attack"] = results["history_X_no_attack"]
+        data_dict["Y_votes_no_attack"] = results["history_Y_no_attack"]
+
+    df = pd.DataFrame(data_dict)
+
+# determine the majority and whether attack succeeded
 df["Majority"] = df.apply(lambda row: "Y" if row["Y_votes"] > row["X_votes"] else "X", axis=1)
 if attack_mode:
     df["AttackSucceeded"] = df["Majority"].apply(lambda m: 1 if m == "Y" else 0)
@@ -420,6 +437,7 @@ if appeal_mode:
 
         df_levels = pd.DataFrame({
             "Level": levels,
+             "Number of Jurors": results["num_jurors_by_level"],
             "Average X Votes": results["avg_votes_X_by_level"],
             "Average Y Votes": results["avg_votes_Y_by_level"],
             "Total Votes": total_votes_by_level,
@@ -473,5 +491,3 @@ if appeal_mode:
         ).properties(width=600, height=300)
         
         st.altair_chart(payoff_chart, use_container_width=False)
-
-
