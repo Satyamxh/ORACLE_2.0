@@ -25,6 +25,11 @@ class Juror:
         Accounts for honesty (voting true belief), rationality (voting best perceived payoff), 
         and noise (random payoff misperception).
         """
+
+        if self.honesty == 0 and self.rationality == 0:
+            self.vote = random.choice(["X", "Y"])
+            return self.vote
+
         # With probability equal to honesty, vote sincerely (according to own belief)
         if random.random() < self.honesty:
             self.vote = self.belief
